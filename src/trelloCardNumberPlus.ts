@@ -68,6 +68,7 @@ function startSettleRescan(): void {
   }, 2000);
 }
 
+installHostBridge();
 configStorage.get(refresh);
 configStorage.listen(refresh);
 setupObserver();
@@ -229,6 +230,31 @@ function setupNumbers(): void {
   if (newMoves.length > 0) recordMoves(newMoves);
 }
 
+/**
+ * Bridge to a host dock (ikmal webtools): content scripts of one extension share a window, so the dock
+ * reads state from window.__tcnpMoves and hears events. While the dock is present and visible it owns the
+ * move UI and this plugin draws nothing of its own.
+ */
+interface HostWindow {
+  __ikmalDockPresent?: boolean;
+  __tcnpMoves?: unknown;
+}
+
+function dockOwnsMoves(): boolean {
+  return (window as unknown as HostWindow).__ikmalDockPresent === true;
+}
+
+function installHostBridge(): void {
+  (window as unknown as HostWindow).__tcnpMoves = {
+    getState: () => ({ entries: moveLog, alertMs: alertVisibleMs() }),
+    jump: jumpToCard,
+    clearHighlights: clearMovedCards,
+    clearHistory: clearMoveHistory,
+  };
+  // The dock appearing or being hidden changes who draws the move UI.
+  window.addEventListener('ikmal:dock-visibility', () => renderMoveActivity());
+}
+
 function readCardTitle(card: Element): string {
   const titleEl = card.querySelector(CARD_SHORT_ID_SELECTOR);
   if (!titleEl) return '';
@@ -316,6 +342,13 @@ function ensureActivityRoot(): HTMLElement {
 }
 
 function renderMoveActivity(): void {
+  window.dispatchEvent(new CustomEvent('tcnp:moves-changed'));
+  if (dockOwnsMoves()) {
+    activityRoot?.remove();
+    activityRoot = undefined;
+    activityPanelOpen = false;
+    return;
+  }
   if (moveLog.length === 0 && movedCards.size === 0) {
     activityRoot?.remove();
     activityRoot = undefined;
@@ -330,6 +363,10 @@ function renderMoveActivity(): void {
 }
 
 function showMoveAlert(text: string): void {
+  if (dockOwnsMoves()) {
+    window.dispatchEvent(new CustomEvent('tcnp:move-alert', { detail: { text, ms: alertVisibleMs() } }));
+    return;
+  }
   const root = ensureActivityRoot();
   const status = root.querySelector('.tcnp-moved-cards-status');
   if (status) status.textContent = text;
