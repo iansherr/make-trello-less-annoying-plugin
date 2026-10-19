@@ -10,7 +10,18 @@ import {
   TCNP_NUMBER_CLASS_SELECTOR,
   TCNP_OVERLAY_CLASS,
 } from './shared/const';
-import { Configs, configStorage, moveLogStorage } from './shared/storage';
+import { Configs, configStorage, moveLogStorage, moveRulesStorage } from './shared/storage';
+import {
+  BoardRules,
+  ListRef,
+  RuleState,
+  emptyBoardRules,
+  emptyRuleState,
+  findRule,
+  judgeMove,
+  listKey,
+  sanitizeRuleState,
+} from './shared/moveRules';
 import { ALERT_VISIBLE_MS, MoveLogEntry, appendMoves, formatAge, mergeLogs, sanitizeLog } from './shared/moveLog';
 import {
   formatCardBadge,
@@ -33,6 +44,8 @@ let settleIntervalId: number | undefined;
 let settleStopTimeoutId: number | undefined;
 const previousCardLocations = new Map<string, string>();
 const previousListLabels = new Map<string, string>();
+const previousListIds = new Map<string, string | undefined>();
+let ruleState: RuleState = emptyRuleState();
 const listIdentityByElement = new WeakMap<Element, string>();
 let nextListIdentity = 0;
 let hasCardLocationBaseline = false;
@@ -162,7 +175,7 @@ function findCardPosition(cardId: number): { position: number; total: number } {
 
 function setupNumbers(): void {
   const updated = new Set<Element>();
-  const currentCardLocations = new Map<string, { key: string; label: string; card: Element }>();
+  const currentCardLocations = new Map<string, { key: string; label: string; listId?: string; card: Element }>();
   const newMoves: MoveLogEntry[] = [];
   ensureMoveLog();
 
@@ -179,6 +192,7 @@ function setupNumbers(): void {
       listIdentityByElement.set(listContainer, key);
     }
 
+    const listId = readListId(listHeader);
     const cards = listContainer.querySelectorAll(CARD_SHORT_ID_SELECTOR);
     const total = cards.length;
     cards.forEach((cardParent, index) => {
@@ -187,7 +201,7 @@ function setupNumbers(): void {
       const cardId = getCardNumberFromParent(cardParent);
       const card = cardParent.closest('li');
       if (!isNaN(cardId) && card) {
-        currentCardLocations.set(cardId.toString(), { key, label, card });
+        currentCardLocations.set(cardId.toString(), { key, label, listId, card });
       }
     });
   });
@@ -205,20 +219,32 @@ function setupNumbers(): void {
       const current = currentCardLocations.get(cardId);
       if (!current || previousKey === undefined) return;
       const previousLabel = previousListLabels.get(previousKey) ?? previousKey;
-      movedCards.set(cardId, { card: current.card, from: previousLabel, to: current.label });
-      current.card.classList.add('tcnp-moved-card');
+      const verdict = judgeMove(ruleState.boards[getCurrentBoardId()], ruleState.ignoreOwnMoves, {
+        from: { id: previousListIds.get(previousKey), name: previousLabel },
+        to: { id: current.listId, name: current.label },
+        members: readCardMembers(current.card),
+        own: looksLikeOwnMove(),
+      });
+      if (!verdict.record) return;
+      // A silent rule keeps the move in the history but draws no outline and raises no alert.
+      if (verdict.alert) {
+        movedCards.set(cardId, { card: current.card, from: previousLabel, to: current.label });
+        current.card.classList.add('tcnp-moved-card');
+      }
       newMoves.push({
         cardId,
         title: readCardTitle(current.card),
         from: previousLabel,
         to: current.label,
         at: Date.now(),
+        silent: !verdict.alert,
       });
     });
   }
 
   currentCardLocations.forEach((location, cardId) => {
     previousListLabels.set(location.key, location.label);
+    previousListIds.set(location.key, location.listId);
     previousCardLocations.set(cardId, location.key);
     const moved = movedCards.get(cardId);
     if (moved) {
@@ -238,13 +264,131 @@ function setupNumbers(): void {
 interface HostWindow {
   __ikmalDockPresent?: boolean;
   __tcnpMoves?: unknown;
+  __tcnpRules?: unknown;
 }
 
 function dockOwnsMoves(): boolean {
   return (window as unknown as HostWindow).__ikmalDockPresent === true;
 }
 
+/** Trello gives each list name element an id like "list-<hex>": a stable key that survives renames. */
+function readListId(listHeader: Element): string | undefined {
+  const id = listHeader.querySelector('[data-testid=list-name]')?.id;
+  return id && id.startsWith('list-') ? id : undefined;
+}
+
+/** Names/initials of members shown on the card face. Trello's markup is not verified here: best effort. */
+function readCardMembers(card: Element): string[] {
+  const found = new Set<string>();
+  card.querySelectorAll('[data-testid*="member"], [class*="member"], img[alt]').forEach((el) => {
+    const label = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || el.textContent;
+    if (label && label.trim()) found.add(label.trim());
+  });
+  return Array.from(found);
+}
+
+// A move that appears while the user is pressing/dragging or just acted is treated as their own.
+const OWN_MOVE_WINDOW_MS = 2500;
+let pointerHeld = false;
+let lastInteractionAt = 0;
+function looksLikeOwnMove(): boolean {
+  return pointerHeld || Date.now() - lastInteractionAt < OWN_MOVE_WINDOW_MS;
+}
+function trackInteraction(): void {
+  const mark = () => {
+    lastInteractionAt = Date.now();
+  };
+  document.addEventListener(
+    'pointerdown',
+    () => {
+      pointerHeld = true;
+      mark();
+    },
+    true
+  );
+  ['pointerup', 'pointercancel'].forEach((type) =>
+    document.addEventListener(
+      type,
+      () => {
+        pointerHeld = false;
+        mark();
+      },
+      true
+    )
+  );
+  document.addEventListener('keydown', mark, true);
+}
+
+function currentLists(): Array<ListRef & { key: string }> {
+  const lists: Array<ListRef & { key: string }> = [];
+  document.querySelectorAll(LIST_HEADER_SELECTOR).forEach((listHeader) => {
+    const headerCopy = listHeader.cloneNode(true) as HTMLElement;
+    headerCopy.querySelector('.' + TCNP_LIST_COUNTER_CLASS)?.remove();
+    const name = (headerCopy.innerText || headerCopy.textContent || '').trim();
+    if (!name) return;
+    const ref = { id: readListId(listHeader), name };
+    lists.push({ ...ref, key: listKey(ref) });
+  });
+  return lists;
+}
+
+function saveRuleState(): void {
+  moveRulesStorage.set(ruleState);
+  window.dispatchEvent(new CustomEvent('tcnp:rules-changed'));
+}
+
+function boardNameFromTitle(): string {
+  return document.title.replace(/\s*\|\s*Trello\s*$/i, '').trim();
+}
+
 function installHostBridge(): void {
+  moveRulesStorage.get((raw) => {
+    ruleState = sanitizeRuleState(raw);
+    window.dispatchEvent(new CustomEvent('tcnp:rules-changed'));
+  });
+  moveRulesStorage.listen((raw) => {
+    ruleState = sanitizeRuleState(raw);
+    window.dispatchEvent(new CustomEvent('tcnp:rules-changed'));
+  });
+  trackInteraction();
+  (window as unknown as HostWindow).__tcnpRules = {
+    getState: () => {
+      const boardId = getCurrentBoardId();
+      const board: BoardRules = ruleState.boards[boardId] ?? emptyBoardRules();
+      return {
+        boardId,
+        boardName: boardNameFromTitle(),
+        ignoreOwnMoves: ruleState.ignoreOwnMoves,
+        members: board.members,
+        lists: currentLists().map((l) => ({ ...l, rule: findRule(board, l) ?? null })),
+      };
+    },
+    setListRule: (ref: ListRef, rule: { mode: string; silent?: boolean } | null) => {
+      const boardId = getCurrentBoardId();
+      const board = ruleState.boards[boardId] ?? (ruleState.boards[boardId] = emptyBoardRules());
+      board.boardName = boardNameFromTitle();
+      // Replace any older name-keyed rule for the same list so a rule is never stored twice.
+      delete board.lists[listKey({ name: ref.name })];
+      delete board.lists[listKey(ref)];
+      if (rule) board.lists[listKey(ref)] = { name: ref.name, mode: rule.mode as 'watch', silent: !!rule.silent };
+      saveRuleState();
+    },
+    setMembers: (members: string[]) => {
+      const boardId = getCurrentBoardId();
+      const board = ruleState.boards[boardId] ?? (ruleState.boards[boardId] = emptyBoardRules());
+      board.boardName = boardNameFromTitle();
+      board.members = members.map((m) => m.trim()).filter(Boolean);
+      saveRuleState();
+    },
+    setIgnoreOwnMoves: (value: boolean) => {
+      ruleState.ignoreOwnMoves = value;
+      saveRuleState();
+    },
+    clearBoardRules: () => {
+      delete ruleState.boards[getCurrentBoardId()];
+      saveRuleState();
+    },
+  };
   (window as unknown as HostWindow).__tcnpMoves = {
     getState: () => ({ entries: moveLog, alertMs: alertVisibleMs() }),
     jump: jumpToCard,
@@ -284,12 +428,14 @@ function ensureMoveLog(): void {
 function recordMoves(moves: MoveLogEntry[]): void {
   moveLog = appendMoves(moveLog, moves);
   if (moveLogBoardId) moveLogStorage.set(moveLogBoardId, moveLog);
-  const latest = moves[0];
-  const text =
-    moves.length === 1
-      ? `Card ${latest.cardId} moved from ${latest.from} to ${latest.to}`
-      : `${moves.length} cards moved`;
+  const loud = moves.filter((m) => !m.silent);
   renderMoveActivity();
+  if (loud.length === 0) return; // silent rules: history only
+  const latest = loud[0];
+  const text =
+    loud.length === 1
+      ? `Card ${latest.cardId} moved from ${latest.from} to ${latest.to}`
+      : `${loud.length} cards moved`;
   showMoveAlert(text);
 }
 

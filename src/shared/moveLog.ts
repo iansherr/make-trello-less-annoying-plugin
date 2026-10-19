@@ -5,6 +5,8 @@ export interface MoveLogEntry {
   to: string;
   /** epoch ms */
   at: number;
+  /** Recorded by a silent rule: kept in the history, no alert was raised. */
+  silent?: boolean;
 }
 
 export const MOVE_LOG_LIMIT = 200;
