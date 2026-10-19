@@ -23,9 +23,14 @@ export function extensionAlive(): boolean {
   return alive;
 }
 
+const INVALIDATED = /context invalidated/i;
+
 function markInvalidated(): void {
   if (contextInvalidated) return;
   contextInvalidated = true;
+  console.info(
+    '[tcnp] The extension was reloaded or updated: this tab still runs the old plugin, which has stopped. Reload the page.'
+  );
   invalidatedListeners.splice(0).forEach((listener) => {
     try {
       listener();
@@ -35,12 +40,28 @@ function markInvalidated(): void {
   });
 }
 
+// Safety net: if an invalidation error escapes from any other call, shut down instead of erroring forever.
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    if (INVALIDATED.test(event.message || (event.error as Error | undefined)?.message || '')) {
+      event.preventDefault();
+      markInvalidated();
+    }
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    if (INVALIDATED.test(String((event.reason as Error | undefined)?.message ?? event.reason))) {
+      event.preventDefault();
+      markInvalidated();
+    }
+  });
+}
+
 function guarded(call: () => void): void {
   if (!extensionAlive()) return;
   try {
     call();
   } catch (error) {
-    if (/context invalidated/i.test(String((error as Error)?.message))) markInvalidated();
+    if (INVALIDATED.test(String((error as Error)?.message))) markInvalidated();
     else throw error;
   }
 }
