@@ -241,9 +241,7 @@ function setupNumbers(scope?: Set<Element>): void {
     if (!listContainer) return;
     if (!isDirtyList(scope, listContainer, listHeader)) return;
 
-    const headerCopy = listHeader.cloneNode(true) as HTMLElement;
-    headerCopy.querySelector('.' + TCNP_LIST_COUNTER_CLASS)?.remove();
-    const label = (headerCopy.innerText || headerCopy.textContent || '').trim();
+    const label = readListName(listHeader);
     let key = listContainer.getAttribute('data-id') || listContainer.id || listHeader.getAttribute('data-id') || '';
     if (!key) {
       key = listIdentityByElement.get(listContainer) ?? `list-${++nextListIdentity}`;
@@ -331,6 +329,22 @@ function dockOwnsMoves(): boolean {
   return (window as unknown as HostWindow).__ikmalDockPresent === true;
 }
 
+/**
+ * The list's name as the user sees it. The header also holds a hidden rename textarea (the name a second
+ * time) and a card count that changes as cards move, so reading the whole header produced names like
+ * "Ready to EditReady to Edit59". Read Trello's title element; fall back to the header minus those parts.
+ */
+function readListName(listHeader: Element): string {
+  const title = listHeader.querySelector('[data-testid=list-name]');
+  const fromTitle = (title?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  if (fromTitle) return fromTitle;
+  const copy = listHeader.cloneNode(true) as HTMLElement;
+  copy
+    .querySelectorAll('.' + TCNP_LIST_COUNTER_CLASS + ', textarea, input, [data-testid*="count"]')
+    .forEach((el) => el.remove());
+  return (copy.innerText || copy.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
 /** Trello gives each list name element an id like "list-<hex>": a stable key that survives renames. */
 function readListId(listHeader: Element): string | undefined {
   const id = listHeader.querySelector('[data-testid=list-name]')?.id;
@@ -382,9 +396,7 @@ function trackInteraction(): void {
 function currentLists(): Array<ListRef & { key: string }> {
   const lists: Array<ListRef & { key: string }> = [];
   document.querySelectorAll(LIST_HEADER_SELECTOR).forEach((listHeader) => {
-    const headerCopy = listHeader.cloneNode(true) as HTMLElement;
-    headerCopy.querySelector('.' + TCNP_LIST_COUNTER_CLASS)?.remove();
-    const name = (headerCopy.innerText || headerCopy.textContent || '').trim();
+    const name = readListName(listHeader);
     if (!name) return;
     const ref = { id: readListId(listHeader), name };
     lists.push({ ...ref, key: listKey(ref) });
