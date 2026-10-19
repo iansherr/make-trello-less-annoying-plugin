@@ -2,6 +2,10 @@ export class Configs {
   cardCountersActive = true;
   cardNumbersActive = true;
   cardNumbersBold = true;
+  badgePosition: 'before' | 'after' = 'before';
+  badgeStyle: 'inline' | 'overlay' = 'inline';
+  overlayCorner: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' = 'top-right';
+  overlayAutoContrast = true;
   numberFormat = '#%0';
   numberColor = '#000';
   excludedBoards = '';
