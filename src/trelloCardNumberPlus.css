@@ -236,3 +236,10 @@
 .tcnp-bold {
   font-weight: bold;
 }
+
+/* Experimental (off by default): while a card dialog is open, skip rendering the lists behind it.
+   Targets the lists container only, never the canvas, so the dialog itself can't be hidden. */
+html.tcnp-lighten-board [data-testid='lists'] {
+  content-visibility: hidden;
+  contain-intrinsic-size: auto 100vw auto 100vh;
+}

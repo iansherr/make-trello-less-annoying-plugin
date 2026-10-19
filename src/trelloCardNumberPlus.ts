@@ -10,7 +10,14 @@ import {
   TCNP_NUMBER_CLASS_SELECTOR,
   TCNP_OVERLAY_CLASS,
 } from './shared/const';
-import { Configs, configStorage, moveLogStorage, moveRulesStorage } from './shared/storage';
+import {
+  Configs,
+  configStorage,
+  extensionAlive,
+  moveLogStorage,
+  moveRulesStorage,
+  onContextInvalidated,
+} from './shared/storage';
 import {
   BoardRules,
   ListRef,
@@ -53,19 +60,60 @@ const movedCards = new Map<string, { card: Element; from: string; to: string }>(
 let moveLog: MoveLogEntry[] = [];
 let moveLogBoardId = '';
 let alertTimerId: number | undefined;
+let boardObserver: MutationObserver | undefined;
 let activityRoot: HTMLElement | undefined;
 let activityPanelOpen = false;
 
-function rescanBoard(): void {
-  setupCounters();
-  setupNumbers();
+// Scan scheduling. A change only rescans the list it happened in (not all of a 1,000+ card board), nothing
+// is scanned while a card dialog is open (the board behind it is not what the user is looking at), and the
+// settle loop only does work when something actually changed.
+let pendingFullScan = true;
+const pendingLists = new Set<Element>();
+let cardWasOpen = false;
+
+const isCardOpen = (): boolean => window.location.pathname.startsWith('/c/');
+
+function markDirty(el: Element | null): void {
+  const list = el?.closest('[data-testid=list]') ?? null;
+  if (list) pendingLists.add(list);
+  else pendingFullScan = true; // can't tell which list changed: be safe
+}
+
+/** True when this list header belongs to a list that changed (or when everything is being rescanned). */
+function isDirtyList(scope: Set<Element> | undefined, listContainer: Element, listHeader: Element): boolean {
+  if (!scope) return true;
+  if (scope.has(listContainer)) return true;
+  for (const list of scope) if (list.contains(listHeader)) return true;
+  return false;
+}
+
+function syncCardOpenState(): void {
+  const open = isCardOpen();
+  document.documentElement.classList.toggle('tcnp-lighten-board', open && !!configs.lightenBoardBehindCard);
+  if (cardWasOpen && !open) {
+    // The dialog closed: catch up on whatever changed behind it.
+    pendingFullScan = true;
+    startSettleRescan();
+  }
+  cardWasOpen = open;
+}
+
+function rescanDirty(): void {
+  if (!extensionAlive()) return; // orphaned by an extension reload: shuts itself down
+  if (isCardOpen()) return; // keep what is pending; it runs once the card closes
+  if (!pendingFullScan && pendingLists.size === 0) return;
+  const scope = pendingFullScan ? undefined : new Set(pendingLists);
+  pendingFullScan = false;
+  pendingLists.clear();
+  setupCounters(scope);
+  setupNumbers(scope);
 }
 
 function startSettleRescan(): void {
-  rescanBoard();
+  rescanDirty();
 
   if (!settleIntervalId) {
-    settleIntervalId = window.setInterval(rescanBoard, 100);
+    settleIntervalId = window.setInterval(rescanDirty, 100);
   }
 
   if (settleStopTimeoutId) {
@@ -96,13 +144,16 @@ function refresh(updatedConfigs?: Configs): void {
   }
   isCurrentBoardExcluded = isBoardExcluded(configs.excludedBoards, getCurrentBoardId());
 
+  syncCardOpenState();
   setupCounters();
   setupNumbers();
   setupDialogNumber();
 }
 
 function setupObserver(): void {
-  const observer = new MutationObserver((mutations: MutationRecord[]) => {
+  boardObserver = new MutationObserver((mutations: MutationRecord[]) => {
+    syncCardOpenState();
+    let settle = false;
     mutations.forEach((mutation) => {
       const target = mutation.target;
       if (!(target instanceof Element)) return;
@@ -110,8 +161,12 @@ function setupObserver(): void {
       const cardLinkUpdated = isCardLinkUpdated(mutation);
       const listItemAdded = isCardListItemAdded(mutation);
 
-      if (isDialogClosed(target, mutation) || cardLinkUpdated || listItemAdded) {
-        startSettleRescan();
+      if (isDialogClosed(target, mutation)) {
+        pendingFullScan = true;
+        settle = true;
+      } else if (cardLinkUpdated || listItemAdded) {
+        markDirty(target);
+        settle = true;
       }
 
       if (isDialogOpened(target)) {
@@ -121,12 +176,14 @@ function setupObserver(): void {
       if (isRemovedCard(mutation)) {
         // Recount AND renumber: removing a card shifts the position of every
         // card after it, so numbers must refresh alongside the counters.
-        rescanBoard();
+        markDirty(target);
+        settle = true;
       }
     });
+    if (settle) startSettleRescan();
   });
 
-  observer.observe(document.body, {
+  boardObserver.observe(document.body, {
     attributes: true,
     childList: true,
     subtree: true,
@@ -173,7 +230,7 @@ function findCardPosition(cardId: number): { position: number; total: number } {
   return { position: NaN, total: NaN };
 }
 
-function setupNumbers(): void {
+function setupNumbers(scope?: Set<Element>): void {
   const updated = new Set<Element>();
   const currentCardLocations = new Map<string, { key: string; label: string; listId?: string; card: Element }>();
   const newMoves: MoveLogEntry[] = [];
@@ -182,6 +239,7 @@ function setupNumbers(): void {
   document.querySelectorAll(LIST_HEADER_SELECTOR).forEach((listHeader) => {
     const listContainer = listHeader.parentElement;
     if (!listContainer) return;
+    if (!isDirtyList(scope, listContainer, listHeader)) return;
 
     const headerCopy = listHeader.cloneNode(true) as HTMLElement;
     headerCopy.querySelector('.' + TCNP_LIST_COUNTER_CLASS)?.remove();
@@ -206,11 +264,13 @@ function setupNumbers(): void {
     });
   });
 
-  // Fallback for cards that are not inside any list container: ID-only badge.
-  document.querySelectorAll(CARD_SHORT_ID_SELECTOR).forEach((cardParent) => {
-    if (updated.has(cardParent)) return;
-    updateCardBadge(cardParent, NaN, NaN);
-  });
+  // Fallback for cards that are not inside any list container: ID-only badge (full scans only).
+  if (!scope) {
+    document.querySelectorAll(CARD_SHORT_ID_SELECTOR).forEach((cardParent) => {
+      if (updated.has(cardParent)) return;
+      updateCardBadge(cardParent, NaN, NaN);
+    });
+  }
 
   if (hasCardLocationBaseline) {
     const currentKeys = new Map(Array.from(currentCardLocations, ([id, location]) => [id, location.key]));
@@ -341,7 +401,24 @@ function boardNameFromTitle(): string {
   return document.title.replace(/\s*\|\s*Trello\s*$/i, '').trim();
 }
 
+/** The extension was reloaded or updated while this tab stayed open: stop all work and drop our UI. */
+function shutDownOrphanedScript(): void {
+  boardObserver?.disconnect();
+  window.clearInterval(settleIntervalId);
+  window.clearTimeout(settleStopTimeoutId);
+  window.clearTimeout(alertTimerId);
+  settleIntervalId = undefined;
+  settleStopTimeoutId = undefined;
+  activityRoot?.remove();
+  activityRoot = undefined;
+  activityPanelOpen = false;
+  (window as unknown as HostWindow).__tcnpMoves = undefined;
+  (window as unknown as HostWindow).__tcnpRules = undefined;
+  window.dispatchEvent(new CustomEvent('tcnp:moves-changed'));
+}
+
 function installHostBridge(): void {
+  onContextInvalidated(shutDownOrphanedScript);
   moveRulesStorage.get((raw) => {
     ruleState = sanitizeRuleState(raw);
     window.dispatchEvent(new CustomEvent('tcnp:rules-changed'));
@@ -726,9 +803,10 @@ function updateOverlayBadge(cardParent: Element, text: string): void {
   pill.classList.toggle(TCNP_NUMBER_CLASS_BOLD, configs.cardNumbersBold);
 }
 
-function setupCounters(): void {
+function setupCounters(scope?: Set<Element>): void {
   document.querySelectorAll(LIST_HEADER_SELECTOR).forEach((listHeader) => {
     if (!listHeader) return;
+    if (!isDirtyList(scope, listHeader.parentElement ?? listHeader, listHeader)) return;
 
     const existingElement = listHeader.querySelector('.' + TCNP_LIST_COUNTER_CLASS) as HTMLElement;
     const cardsCounter = listHeader.parentElement?.querySelectorAll('li')?.length ?? NaN;
