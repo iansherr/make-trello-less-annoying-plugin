@@ -10,7 +10,8 @@ import {
   TCNP_NUMBER_CLASS_SELECTOR,
   TCNP_OVERLAY_CLASS,
 } from './shared/const';
-import { Configs, configStorage } from './shared/storage';
+import { Configs, configStorage, moveLogStorage } from './shared/storage';
+import { ALERT_VISIBLE_MS, MoveLogEntry, appendMoves, formatAge, mergeLogs, sanitizeLog } from './shared/moveLog';
 import {
   formatCardBadge,
   getCardNumberFromParent,
@@ -36,8 +37,11 @@ const listIdentityByElement = new WeakMap<Element, string>();
 let nextListIdentity = 0;
 let hasCardLocationBaseline = false;
 const movedCards = new Map<string, { card: Element; from: string; to: string }>();
-let selectedMovedCard = 0;
-let movedCardsNavigator: HTMLElement | undefined;
+let moveLog: MoveLogEntry[] = [];
+let moveLogBoardId = '';
+let alertTimerId: number | undefined;
+let activityRoot: HTMLElement | undefined;
+let activityPanelOpen = false;
 
 function rescanBoard(): void {
   setupCounters();
@@ -158,6 +162,8 @@ function findCardPosition(cardId: number): { position: number; total: number } {
 function setupNumbers(): void {
   const updated = new Set<Element>();
   const currentCardLocations = new Map<string, { key: string; label: string; card: Element }>();
+  const newMoves: MoveLogEntry[] = [];
+  ensureMoveLog();
 
   document.querySelectorAll(LIST_HEADER_SELECTOR).forEach((listHeader) => {
     const listContainer = listHeader.parentElement;
@@ -200,6 +206,13 @@ function setupNumbers(): void {
       const previousLabel = previousListLabels.get(previousKey) ?? previousKey;
       movedCards.set(cardId, { card: current.card, from: previousLabel, to: current.label });
       current.card.classList.add('tcnp-moved-card');
+      newMoves.push({
+        cardId,
+        title: readCardTitle(current.card),
+        from: previousLabel,
+        to: current.label,
+        at: Date.now(),
+      });
     });
   }
 
@@ -213,73 +226,221 @@ function setupNumbers(): void {
     }
   });
   hasCardLocationBaseline = true;
-  renderMovedCardsNavigator();
+  if (newMoves.length > 0) recordMoves(newMoves);
 }
 
-function renderMovedCardsNavigator(): void {
-  if (movedCards.size === 0) {
-    movedCardsNavigator?.remove();
-    movedCardsNavigator = undefined;
+function readCardTitle(card: Element): string {
+  const titleEl = card.querySelector(CARD_SHORT_ID_SELECTOR);
+  if (!titleEl) return '';
+  const copy = titleEl.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('.' + TCNP_NUMBER_CLASS + ', .' + TCNP_OVERLAY_CLASS).forEach((el) => el.remove());
+  return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function isBoardPage(): boolean {
+  return window.location.pathname.startsWith('/b/') && !!getCurrentBoardId();
+}
+
+/** Load this board's stored move history once per board (and after SPA navigation to another board). */
+function ensureMoveLog(): void {
+  if (!isBoardPage()) return;
+  const boardId = getCurrentBoardId();
+  if (boardId === moveLogBoardId) return;
+  moveLogBoardId = boardId;
+  moveLog = [];
+  moveLogStorage.get(boardId, (raw) => {
+    if (boardId !== moveLogBoardId) return;
+    moveLog = mergeLogs(sanitizeLog(raw), moveLog);
+    renderMoveActivity();
+  });
+}
+
+function recordMoves(moves: MoveLogEntry[]): void {
+  moveLog = appendMoves(moveLog, moves);
+  if (moveLogBoardId) moveLogStorage.set(moveLogBoardId, moveLog);
+  const latest = moves[0];
+  const text =
+    moves.length === 1
+      ? `Card ${latest.cardId} moved from ${latest.from} to ${latest.to}`
+      : `${moves.length} cards moved`;
+  renderMoveActivity();
+  showMoveAlert(text);
+}
+
+function ensureActivityRoot(): HTMLElement {
+  if (activityRoot) return activityRoot;
+
+  const root = document.createElement('section');
+  root.className = 'tcnp-moved-cards-navigator is-collapsed';
+  root.setAttribute('aria-label', 'Moved cards');
+
+  const alert = document.createElement('div');
+  alert.className = 'tcnp-alert';
+  alert.setAttribute('role', 'status');
+  const status = document.createElement('span');
+  status.className = 'tcnp-moved-cards-status';
+  const viewAll = document.createElement('button');
+  viewAll.type = 'button';
+  viewAll.className = 'tcnp-view-all';
+  viewAll.textContent = 'View all';
+  viewAll.addEventListener('click', () => toggleActivityPanel(true));
+  alert.append(status, viewAll);
+  // Hovering keeps the alert readable; it fades shortly after the pointer leaves.
+  alert.addEventListener('mouseenter', () => window.clearTimeout(alertTimerId));
+  alert.addEventListener('mouseleave', () => scheduleAlertCollapse(3000));
+
+  const icon = document.createElement('button');
+  icon.type = 'button';
+  icon.className = 'tcnp-activity-icon';
+  icon.setAttribute('aria-label', 'Card moves: view all');
+  icon.title = 'View all card moves';
+  icon.innerHTML = 'iw<span class="tcnp-activity-count"></span>';
+  icon.addEventListener('click', () => toggleActivityPanel());
+
+  const panel = document.createElement('div');
+  panel.className = 'tcnp-activity-panel';
+  panel.hidden = true;
+
+  root.append(alert, panel, icon);
+  document.body.append(root);
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && activityPanelOpen) toggleActivityPanel(false);
+  });
+  document.addEventListener('mousedown', (event) => {
+    if (activityPanelOpen && !root.contains(event.target as Node)) toggleActivityPanel(false);
+  });
+
+  activityRoot = root;
+  return root;
+}
+
+function renderMoveActivity(): void {
+  if (moveLog.length === 0 && movedCards.size === 0) {
+    activityRoot?.remove();
+    activityRoot = undefined;
+    activityPanelOpen = false;
     return;
   }
+  const root = ensureActivityRoot();
+  if (!root.isConnected) document.body.append(root);
+  const count = root.querySelector('.tcnp-activity-count');
+  if (count) count.textContent = moveLog.length > 99 ? '99+' : String(moveLog.length);
+  if (activityPanelOpen) renderActivityPanel();
+}
 
-  if (!movedCardsNavigator) {
-    const navigator = document.createElement('section');
-    navigator.className = 'tcnp-moved-cards-navigator';
-    navigator.setAttribute('aria-label', 'Moved cards');
+function showMoveAlert(text: string): void {
+  const root = ensureActivityRoot();
+  const status = root.querySelector('.tcnp-moved-cards-status');
+  if (status) status.textContent = text;
+  if (activityPanelOpen) return; // the open list already shows it
+  root.classList.remove('is-collapsed');
+  scheduleAlertCollapse(ALERT_VISIBLE_MS);
+}
 
-    const status = document.createElement('span');
-    status.className = 'tcnp-moved-cards-status';
-    navigator.append(status);
+function scheduleAlertCollapse(ms: number): void {
+  window.clearTimeout(alertTimerId);
+  alertTimerId = window.setTimeout(() => activityRoot?.classList.add('is-collapsed'), ms);
+}
 
-    const previousButton = document.createElement('button');
-    previousButton.type = 'button';
-    previousButton.textContent = 'Previous';
-    previousButton.addEventListener('click', () => selectMovedCard(-1));
-    navigator.append(previousButton);
-
-    const nextButton = document.createElement('button');
-    nextButton.type = 'button';
-    nextButton.textContent = 'Next';
-    nextButton.addEventListener('click', () => selectMovedCard(1));
-    navigator.append(nextButton);
-
-    const clearButton = document.createElement('button');
-    clearButton.type = 'button';
-    clearButton.textContent = 'Clear';
-    clearButton.addEventListener('click', clearMovedCards);
-    navigator.append(clearButton);
-
-    movedCardsNavigator = navigator;
-    document.body.append(navigator);
-  }
-
-  const entries = Array.from(movedCards.entries());
-  selectedMovedCard = Math.min(selectedMovedCard, entries.length - 1);
-  const [cardId, moved] = entries[selectedMovedCard];
-  const status = movedCardsNavigator.querySelector('.tcnp-moved-cards-status');
-  if (status) {
-    status.textContent = `${selectedMovedCard + 1} of ${entries.length}: Card ${cardId} moved from ${moved.from} to ${
-      moved.to
-    }`;
+function toggleActivityPanel(open = !activityPanelOpen): void {
+  const root = ensureActivityRoot();
+  activityPanelOpen = open;
+  const panel = root.querySelector<HTMLElement>('.tcnp-activity-panel');
+  if (panel) panel.hidden = !open;
+  if (open) {
+    window.clearTimeout(alertTimerId);
+    root.classList.add('is-collapsed');
+    renderActivityPanel();
   }
 }
 
-function selectMovedCard(direction: number): void {
-  const entries = Array.from(movedCards.values());
-  if (entries.length === 0) return;
+function renderActivityPanel(): void {
+  const panel = activityRoot?.querySelector<HTMLElement>('.tcnp-activity-panel');
+  if (!panel) return;
+  panel.replaceChildren();
 
-  selectedMovedCard = (selectedMovedCard + direction + entries.length) % entries.length;
-  const moved = entries[selectedMovedCard];
-  moved.card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  renderMovedCardsNavigator();
+  const header = document.createElement('div');
+  header.className = 'tcnp-activity-header';
+  const heading = document.createElement('strong');
+  heading.textContent = `Card moves (${moveLog.length})`;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = '×';
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', () => toggleActivityPanel(false));
+  header.append(heading, close);
+
+  const list = document.createElement('ol');
+  list.className = 'tcnp-activity-list';
+  if (moveLog.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'tcnp-activity-empty';
+    empty.textContent = 'No moves recorded yet.';
+    list.append(empty);
+  }
+  const now = Date.now();
+  moveLog.forEach((entry) => {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tcnp-activity-entry';
+    button.title = 'Scroll to this card';
+    const title = document.createElement('span');
+    title.className = 'tcnp-activity-title';
+    title.textContent = `#${entry.cardId} ${entry.title}`.trim();
+    const route = document.createElement('span');
+    route.className = 'tcnp-activity-route';
+    route.textContent = `${entry.from} → ${entry.to}`;
+    const age = document.createElement('span');
+    age.className = 'tcnp-activity-age';
+    age.textContent = formatAge(entry.at, now);
+    button.append(title, route, age);
+    button.addEventListener('click', () => jumpToCard(entry.cardId));
+    item.append(button);
+    list.append(item);
+  });
+
+  const footer = document.createElement('div');
+  footer.className = 'tcnp-activity-footer';
+  const clearHighlights = document.createElement('button');
+  clearHighlights.type = 'button';
+  clearHighlights.textContent = 'Clear highlights';
+  clearHighlights.addEventListener('click', clearMovedCards);
+  const clearHistory = document.createElement('button');
+  clearHistory.type = 'button';
+  clearHistory.textContent = 'Clear history';
+  clearHistory.addEventListener('click', clearMoveHistory);
+  footer.append(clearHighlights, clearHistory);
+
+  panel.append(header, list, footer);
+}
+
+function jumpToCard(cardId: string): void {
+  const tracked = movedCards.get(cardId)?.card;
+  const link = Array.from(document.querySelectorAll('a[href*="/c/"]')).find(
+    (a) => getCardNumberFromParent(a).toString() === cardId
+  );
+  const card = tracked ?? link?.closest('[data-testid="trello-card"], [data-testid="list-card"], li');
+  if (!card) return; // card is archived, moved to another board, or not rendered
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!card.classList.contains('tcnp-moved-card')) {
+    card.classList.add('tcnp-moved-card');
+    window.setTimeout(() => card.classList.remove('tcnp-moved-card'), 2500);
+  }
 }
 
 function clearMovedCards(): void {
   movedCards.forEach(({ card }) => card.classList.remove('tcnp-moved-card'));
   movedCards.clear();
-  selectedMovedCard = 0;
-  renderMovedCardsNavigator();
+  renderMoveActivity();
+}
+
+function clearMoveHistory(): void {
+  clearMovedCards();
+  moveLog = [];
+  if (moveLogBoardId) moveLogStorage.remove(moveLogBoardId);
+  renderMoveActivity();
 }
 
 function updateCardBadge(cardParent: Element, position: number, total: number): void {

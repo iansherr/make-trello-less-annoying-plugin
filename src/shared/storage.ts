@@ -30,3 +30,18 @@ export const configStorage = {
     });
   },
 };
+
+const moveLogKey = (boardId: string) => `tcnp_move_log_${boardId}`;
+
+/** Per-board history of tracked card moves. Kept in local storage: it is data, not a setting. */
+export const moveLogStorage = {
+  get: (boardId: string, callback: (raw: unknown) => void) => {
+    chrome.storage.local.get([moveLogKey(boardId)], (items) => callback(items?.[moveLogKey(boardId)]));
+  },
+  set: (boardId: string, log: unknown) => {
+    chrome.storage.local.set({ [moveLogKey(boardId)]: log });
+  },
+  remove: (boardId: string) => {
+    chrome.storage.local.remove(moveLogKey(boardId));
+  },
+};
