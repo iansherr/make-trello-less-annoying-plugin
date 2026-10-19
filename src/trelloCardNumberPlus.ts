@@ -335,7 +335,12 @@ function showMoveAlert(text: string): void {
   if (status) status.textContent = text;
   if (activityPanelOpen) return; // the open list already shows it
   root.classList.remove('is-collapsed');
-  scheduleAlertCollapse(ALERT_VISIBLE_MS);
+  scheduleAlertCollapse(alertVisibleMs());
+}
+
+function alertVisibleMs(): number {
+  const seconds = Number(configs.moveAlertSeconds);
+  return Number.isFinite(seconds) && seconds >= 3 ? Math.min(seconds, 60) * 1000 : ALERT_VISIBLE_MS;
 }
 
 function scheduleAlertCollapse(ms: number): void {

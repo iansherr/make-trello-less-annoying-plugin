@@ -9,6 +9,8 @@ export class Configs {
   numberFormat = '#%0';
   numberColor = '#000';
   excludedBoards = '';
+  /** Seconds the card-move alert stays up before fading to the iw icon. */
+  moveAlertSeconds = 10;
 }
 
 export const configStorage = {
