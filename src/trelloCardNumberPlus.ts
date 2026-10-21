@@ -47,6 +47,14 @@ import {
   isDialogOpened,
   isRemovedCard,
 } from './shared/utils';
+import {
+  MovesApi,
+  RulesApi,
+  buildDockRegistration,
+  dispatchDockToast,
+  publishDockRegistration,
+  withdrawDockRegistration,
+} from './dockContribution';
 import './trelloCardNumberPlus.css';
 
 let configs: Configs = new Configs();
@@ -430,6 +438,7 @@ function shutDownOrphanedScript(): void {
   activityPanelOpen = false;
   (window as unknown as HostWindow).__tcnpMoves = undefined;
   (window as unknown as HostWindow).__tcnpRules = undefined;
+  withdrawDockRegistration();
   window.dispatchEvent(new CustomEvent('tcnp:moves-changed'));
 }
 
@@ -444,7 +453,7 @@ function installHostBridge(): void {
     window.dispatchEvent(new CustomEvent('tcnp:rules-changed'));
   });
   trackInteraction();
-  (window as unknown as HostWindow).__tcnpRules = {
+  const rulesApi: RulesApi = {
     getState: () => {
       const boardId = getCurrentBoardId();
       const board: BoardRules = ruleState.boards[boardId] ?? emptyBoardRules();
@@ -482,12 +491,17 @@ function installHostBridge(): void {
       saveRuleState();
     },
   };
-  (window as unknown as HostWindow).__tcnpMoves = {
+  const movesApi: MovesApi = {
     getState: () => ({ entries: moveLog, alertMs: alertVisibleMs() }),
     jump: jumpToCard,
     clearHighlights: clearMovedCards,
     clearHistory: clearMoveHistory,
   };
+  // Register through the host's plugin contract (window.__ikmalPlugins). The two globals stay for one release so a
+  // host that predates the contract keeps working; a host that supports the contract reads the registration instead.
+  publishDockRegistration(buildDockRegistration(movesApi, rulesApi));
+  (window as unknown as HostWindow).__tcnpRules = rulesApi;
+  (window as unknown as HostWindow).__tcnpMoves = movesApi;
   // The dock appearing or being hidden changes who draws the move UI.
   window.addEventListener('ikmal:dock-visibility', () => renderMoveActivity());
 }
@@ -603,7 +617,10 @@ function renderMoveActivity(): void {
 
 function showMoveAlert(text: string): void {
   if (dockOwnsMoves()) {
+    // Both events: a host with the plugin contract listens for ikmal:toast and ignores the legacy one; an older host
+    // only knows tcnp:move-alert.
     window.dispatchEvent(new CustomEvent('tcnp:move-alert', { detail: { text, ms: alertVisibleMs() } }));
+    dispatchDockToast(text, alertVisibleMs());
     return;
   }
   const root = ensureActivityRoot();
