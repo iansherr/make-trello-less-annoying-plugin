@@ -1,6 +1,10 @@
 import {
+  CARD_CONTAINER_SELECTOR,
+  CARD_SHORT_ID_ANY_SELECTOR,
   CARD_SHORT_ID_SELECTOR,
+  CARD_TITLE_FALLBACK_SELECTOR,
   CARD_TITLE_SELECTOR,
+  LIST_CARD_SELECTOR,
   LIST_HEADER_SELECTOR,
   HEADER_DOTS_BUTTON_SELECTOR,
   TCNP_LIST_COUNTER_CLASS,
@@ -192,7 +196,7 @@ function setupObserver(): void {
 }
 
 function setupDialogNumber(): void {
-  const title = document.querySelector(CARD_TITLE_SELECTOR);
+  const title = document.querySelector(CARD_TITLE_SELECTOR) || document.querySelector(CARD_TITLE_FALLBACK_SELECTOR);
   if (title && title.parentElement?.querySelector(TCNP_NUMBER_CLASS_SELECTOR) === null) {
     const cardId = getCardNumberFromURL(window.location.pathname);
     const { position, total } = findCardPosition(cardId);
@@ -255,7 +259,7 @@ function setupNumbers(scope?: Set<Element>): void {
       updateCardBadge(cardParent, index + 1, total);
       updated.add(cardParent);
       const cardId = getCardNumberFromParent(cardParent);
-      const card = cardParent.closest('li');
+      const card = cardParent.closest<HTMLElement>(CARD_CONTAINER_SELECTOR);
       if (!isNaN(cardId) && card) {
         currentCardLocations.set(cardId.toString(), { key, label, listId, card });
       }
@@ -264,7 +268,7 @@ function setupNumbers(scope?: Set<Element>): void {
 
   // Fallback for cards that are not inside any list container: ID-only badge (full scans only).
   if (!scope) {
-    document.querySelectorAll(CARD_SHORT_ID_SELECTOR).forEach((cardParent) => {
+    document.querySelectorAll(CARD_SHORT_ID_ANY_SELECTOR).forEach((cardParent) => {
       if (updated.has(cardParent)) return;
       updateCardBadge(cardParent, NaN, NaN);
     });
@@ -769,16 +773,15 @@ function updateCardBadge(cardParent: Element, position: number, total: number): 
 }
 
 function removeOverlayBadge(cardParent: Element): void {
-  cardParent
-    .closest('li')
-    ?.querySelector('.' + TCNP_OVERLAY_CLASS)
-    ?.remove();
+  const card = cardParent.closest(CARD_CONTAINER_SELECTOR) || cardParent.closest('li');
+  card?.querySelector('.' + TCNP_OVERLAY_CLASS)?.remove();
+  cardParent.closest('li')?.querySelector('.' + TCNP_OVERLAY_CLASS)?.remove();
 }
 
 function updateOverlayBadge(cardParent: Element, text: string): void {
   // Anchor the pill to the whole Trello card, not the title link: anchoring to
   // the link makes the corner badge appear inline beside the title.
-  const card = cardParent.closest('li');
+  const card = cardParent.closest<HTMLElement>(CARD_CONTAINER_SELECTOR);
   if (!card) return;
 
   if (window.getComputedStyle(card).position === 'static') {
@@ -821,7 +824,7 @@ function setupCounters(scope?: Set<Element>): void {
     if (!isDirtyList(scope, listHeader.parentElement ?? listHeader, listHeader)) return;
 
     const existingElement = listHeader.querySelector('.' + TCNP_LIST_COUNTER_CLASS) as HTMLElement;
-    const cardsCounter = listHeader.parentElement?.querySelectorAll('li')?.length ?? NaN;
+    const cardsCounter = listHeader.parentElement?.querySelectorAll(LIST_CARD_SELECTOR)?.length ?? NaN;
 
     const htmlElement = existingElement ?? document.createElement('span');
     htmlElement.innerHTML = isNaN(cardsCounter) ? '' : `${cardsCounter} cards`;
