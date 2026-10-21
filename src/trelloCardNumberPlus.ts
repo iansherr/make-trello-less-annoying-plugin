@@ -47,6 +47,10 @@ import {
   isDialogOpened,
   isRemovedCard,
 } from './shared/utils';
+import { initTrelloBoardTools, openBoardExportModal } from './features/trelloBoardTools';
+import { initTrelloCardsDashboard } from './features/trelloCardsDashboard';
+import { whenIkmalHost } from './hostLink';
+import { detectTrelloAccount, initTrelloBadgeNormalizer, initTrelloHighlightMovedSuppression } from './trelloPageFixes';
 import {
   MovesApi,
   RulesApi,
@@ -142,6 +146,14 @@ function startSettleRescan(): void {
 }
 
 installHostBridge();
+// The hub's Trello features: only inside the ikmal host (this plugin also runs standalone, where they never ran).
+whenIkmalHost(() => {
+  initTrelloBadgeNormalizer();
+  initTrelloCardsDashboard();
+  initTrelloHighlightMovedSuppression();
+  initTrelloBoardTools();
+  detectTrelloAccount();
+});
 configStorage.get(refresh);
 configStorage.listen(refresh);
 setupObserver();
@@ -499,7 +511,7 @@ function installHostBridge(): void {
   };
   // Register through the host's plugin contract (window.__ikmalPlugins). The two globals stay for one release so a
   // host that predates the contract keeps working; a host that supports the contract reads the registration instead.
-  publishDockRegistration(buildDockRegistration(movesApi, rulesApi));
+  publishDockRegistration(buildDockRegistration(movesApi, rulesApi, () => void openBoardExportModal()));
   (window as unknown as HostWindow).__tcnpRules = rulesApi;
   (window as unknown as HostWindow).__tcnpMoves = movesApi;
   // The dock appearing or being hidden changes who draws the move UI.
@@ -792,7 +804,10 @@ function updateCardBadge(cardParent: Element, position: number, total: number): 
 function removeOverlayBadge(cardParent: Element): void {
   const card = cardParent.closest(CARD_CONTAINER_SELECTOR) || cardParent.closest('li');
   card?.querySelector('.' + TCNP_OVERLAY_CLASS)?.remove();
-  cardParent.closest('li')?.querySelector('.' + TCNP_OVERLAY_CLASS)?.remove();
+  cardParent
+    .closest('li')
+    ?.querySelector('.' + TCNP_OVERLAY_CLASS)
+    ?.remove();
 }
 
 function updateOverlayBadge(cardParent: Element, text: string): void {
