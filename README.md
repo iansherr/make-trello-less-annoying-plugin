@@ -28,7 +28,10 @@ This extension provides full customization of the card numbers, have a look!
 ## Features
 
 - Show card ID
-- Customize card ID format
+- Customize card ID format (`%id` for card ID, `%pos` for position in list, `%total`/`%count` for cards in list, e.g. `#%id (%pos/%total)`)
+- Place the badge before or after the card title
+- Optional app-icon style corner badge (corner, auto-contrast text)
+- Highlight and cycle through cards moved between lists while the board is open
 - Toggle card ID display
 - Toggle cards count display
 - Count cards for each list

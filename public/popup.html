@@ -14,7 +14,12 @@
         <!-- Reenable if headers will make sense -->
         <!-- <div class="config-section-title">Card Numbers</div> -->
         <div class="config-row">
-          <div class="config-label">Card Counters</div>
+          <div class="config-label">
+            <div class="tooltip">
+              List Counters
+              <span class="tooltiptext">Total cards shown in each list header, e.g. 7 cards</span>
+            </div>
+          </div>
           <div class="config-control">
             <label class="switch">
               <input type="checkbox" id="card-counters-active" />
@@ -23,7 +28,14 @@
           </div>
         </div>
         <div class="config-row">
-          <div class="config-label">Card Numbers</div>
+          <div class="config-label">
+            <div class="tooltip">
+              Card Numbers
+              <span class="tooltiptext"
+                >Badge on each card. What it shows is set by Format: card ID, list position, or both</span
+              >
+            </div>
+          </div>
           <div class="config-control">
             <label class="switch">
               <input type="checkbox" id="card-numbers-active" />
@@ -31,31 +43,115 @@
             </label>
           </div>
         </div>
-        <div class="config-row">
-          <div class="config-label">Bold</div>
-          <div class="config-control">
-            <label class="switch">
-              <input type="checkbox" id="card-numbers-bold" />
-              <span class="slider round"></span>
-            </label>
+        <div class="sub-group" id="card-numbers-subgroup">
+          <div class="config-row">
+            <div class="config-label">
+              <div class="tooltip">
+                Bold
+                <span class="tooltiptext">Show the on-card badge in bold</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <label class="switch">
+                <input type="checkbox" id="card-numbers-bold" />
+                <span class="slider round"></span>
+              </label>
+            </div>
           </div>
-        </div>
-        <div class="config-row">
-          <div class="config-label">Format</div>
-          <div class="config-control">
-            <input type="text" id="number-format" placeholder="%0" />
+          <div class="config-row">
+            <div class="config-label">
+              <div class="tooltip">
+                Format
+                <span class="tooltiptext"
+                  >%0 or %id: card ID, %pos: position in list, %total or %count: cards in list</span
+                >
+              </div>
+            </div>
+            <div class="config-control">
+              <input type="text" id="number-format" placeholder="#%id (%pos/%total)" />
+            </div>
           </div>
-        </div>
-        <div class="config-row">
-          <div class="config-label">Color</div>
-          <div class="config-control">
-            <input id="number-color" style="display: none" />
+          <div class="config-row inline-only">
+            <div class="config-label">
+              <div class="tooltip">
+                Placement
+                <span class="tooltiptext">Show the badge before or after the card title</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <select id="badge-placement">
+                <option value="before">Before title</option>
+                <option value="after">After title</option>
+              </select>
+            </div>
           </div>
-        </div>
-        <div class="config-row">
-          <div class="config-label">Preview</div>
-          <div class="config-control">
-            <span id="number-format-preview"></span>
+          <div class="config-row">
+            <div class="config-label">
+              <div class="tooltip">
+                Style
+                <span class="tooltiptext"
+                  >Inline number in the title, or an app-icon style badge on the card corner</span
+                >
+              </div>
+            </div>
+            <div class="config-control">
+              <select id="badge-style">
+                <option value="inline">Inline number</option>
+                <option value="overlay">Corner badge</option>
+              </select>
+            </div>
+          </div>
+          <div class="config-row overlay-only">
+            <div class="config-label">
+              <div class="tooltip">
+                Corner
+                <span class="tooltiptext">Which card corner the badge pins to</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <select id="overlay-corner">
+                <option value="top-right">Top right</option>
+                <option value="top-left">Top left</option>
+                <option value="bottom-right">Bottom right</option>
+                <option value="bottom-left">Bottom left</option>
+              </select>
+            </div>
+          </div>
+          <div class="config-row overlay-only">
+            <div class="config-label">
+              <div class="tooltip">
+                Auto contrast
+                <span class="tooltiptext">Pick black or white badge text automatically for readability</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <label class="switch">
+                <input type="checkbox" id="overlay-auto-contrast" />
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
+          <div class="config-row">
+            <div class="config-label">
+              <div class="tooltip">
+                Color
+                <span class="tooltiptext">Text color of the on-card badge</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <input id="number-color" style="display: none" />
+            </div>
+          </div>
+          <div class="config-row">
+            <div class="config-label">
+              <div class="tooltip">
+                Preview
+                <span class="tooltiptext">Preview using card 619 at position 2 of 7</span>
+              </div>
+            </div>
+            <div class="config-control">
+              <span id="number-format-preview"></span>
+            </div>
           </div>
         </div>
         <div class="config-row">

@@ -1,4 +1,10 @@
-import { TCNP_NUMBER_FORMAT_PLACEHOLDER } from './const';
+import {
+  CARD_SHORT_ID_SELECTOR,
+  TCNP_ID_PLACEHOLDER,
+  TCNP_NUMBER_FORMAT_PLACEHOLDER,
+  TCNP_POSITION_PLACEHOLDER,
+  TCNP_TOTAL_PLACEHOLDERS,
+} from './const';
 
 export function isDialogClosed(element: Element, mutation: MutationRecord): boolean {
   return mutation.removedNodes.length > 0 && element.classList.contains('js-fill-card-detail-desc');
@@ -22,15 +28,66 @@ export function isRemovedCard(mutation: MutationRecord): boolean {
 
 export function isCardListItemAdded(mutation: MutationRecord): boolean {
   if (mutation.type !== 'childList') return false;
-  if (mutation.target.nodeName !== 'OL') return false;
+  if (mutation.target.nodeName === 'OL') {
+    return Array.from(mutation.addedNodes).some((node) => node.nodeName === 'LI');
+  }
 
-  return Array.from(mutation.addedNodes).some((node) => node.nodeName === 'LI');
+  // Trello also renders cards progressively (long lists, scrolling, whole-list
+  // inserts), where the direct mutation target is not the OL. Catch any added
+  // node that is or contains a card. Our own badge divs never match: they are
+  // DIVs containing no card-name element, so this cannot retrigger itself.
+  return Array.from(mutation.addedNodes).some(
+    (node) => node instanceof Element && (node.nodeName === 'LI' || node.querySelector(CARD_SHORT_ID_SELECTOR) !== null)
+  );
 }
 
-export function formatNumber(cardNumber: number, numberFormat: string): string {
-  if (isNaN(cardNumber)) return '';
+export function formatCardBadge(cardId: number, position: number, total: number, numberFormat: string): string {
+  const idText = isNaN(cardId) ? '' : cardId.toString();
+  const positionText = isNaN(position) ? '' : position.toString();
+  const totalText = isNaN(total) ? '' : total.toString();
 
-  return numberFormat.replace(TCNP_NUMBER_FORMAT_PLACEHOLDER, cardNumber.toString());
+  let formatted = numberFormat.split(TCNP_NUMBER_FORMAT_PLACEHOLDER).join(idText);
+  formatted = formatted.split(TCNP_ID_PLACEHOLDER).join(idText);
+  formatted = formatted.split(TCNP_POSITION_PLACEHOLDER).join(positionText);
+  for (const placeholder of TCNP_TOTAL_PLACEHOLDERS) {
+    formatted = formatted.split(placeholder).join(totalText);
+  }
+
+  // Preserve legacy behavior: an ID-only format with an unknown ID renders nothing.
+  if (idText === '' && positionText === '' && totalText === '') return '';
+
+  return formatted;
+}
+
+export function pickOverlayTextColor(background: string, autoContrast: boolean): string {
+  if (!autoContrast) return '#fff';
+
+  return isLightColor(background) ? '#000' : '#fff';
+}
+
+export function findMovedCardIds(previous: Map<string, string>, current: Map<string, string>): string[] {
+  return Array.from(current.keys()).filter((cardId) => {
+    const previousLocation = previous.get(cardId);
+    return previousLocation !== undefined && previousLocation !== current.get(cardId);
+  });
+}
+
+function isLightColor(color: string): boolean {
+  const hex = color.trim().replace(/^#/, '');
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return false;
+
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
 }
 
 export function getCardNumberFromURL(url: string): number {
