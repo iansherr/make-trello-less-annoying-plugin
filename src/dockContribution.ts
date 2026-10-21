@@ -298,7 +298,7 @@ function renderMovesPopover(container: HTMLElement, moves: MovesApi, rules: Rule
   };
 }
 
-export function buildDockRegistration(moves: MovesApi, rules: RulesApi): Registration {
+export function buildDockRegistration(moves: MovesApi, rules: RulesApi, exportBoard: () => void): Registration {
   const count = () => moves.getState().entries.length;
   const popover: Popover = { render: (container) => renderMovesPopover(container, moves, rules) };
   return {
@@ -331,6 +331,13 @@ export function buildDockRegistration(moves: MovesApi, rules: RulesApi): Registr
           title: 'Card moves',
           subtitle: () => `${count() ? `${count()} moved` : 'No moves yet'}${isFiltered(rules) ? ' · filtered' : ''}`,
           popover,
+        },
+        {
+          id: 'export',
+          icon: '▤',
+          title: 'Export Trello Board',
+          subtitle: 'Export cards to Markdown or CSV',
+          onClick: exportBoard,
         },
       ],
     },
